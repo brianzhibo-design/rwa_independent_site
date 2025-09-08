@@ -1,24 +1,3 @@
-# OS
-.DS_Store
-
-# Node
-node_modules/
-npm-debug.log*
-pnpm-lock.yaml
-package-lock.json
-
-# Env
+node_modules
+*.log
 .env
-.env.local
-.env.*.local
-
-# Build outputs
-dist/
-build/
-
-# Prisma
-prisma/dev.db
-prisma/*.sqlite
-
-# VSCode
-.vscode/

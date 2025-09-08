@@ -1,4 +1,3 @@
-// src/routes/orders.js
 import { Router } from 'express'
 import { PrismaClient, Prisma } from '@prisma/client'
 import { mint1155 } from '../services/chain/mint.js'
@@ -42,19 +41,13 @@ const dec2str = (data) => {
 };
 
 /* ---------- 业务辅助 ---------- */
-// 热修复：email 当前不是唯一键，用 findFirst；等你加上 @unique 再切回 findUnique
-// 临时：用 name 存邮箱字符串，待后续新增真正的 email 字段
 async function ensureUserByEmail(email) {
-  let u = await prisma.user.findFirst({ where: { name: email } });
-  if (!u) {
-    u = await prisma.user.create({
-      data: { name: email },
-      select: { id: true, name: true }
-    });
-  }
-  return u;
+  return prisma.user.upsert({
+    where: { email },
+    create: { email },
+    update: {}
+  })
 }
-
 
 function tokenIdFromProduct(p) {
   if (p?.tokenId != null) return Number(p.tokenId) || 1
@@ -66,12 +59,11 @@ function tokenIdFromProduct(p) {
   return 1
 }
 
-/* ---------- 创建订单（mock支付） ---------- */
-router.post('/mock', async (req, res) => {
+/* ---------- 创建订单（pending，返回支付链接，可选优惠券） ---------- */
+router.post('/', async (req, res) => {
   try {
-    const { userEmail, productId, qty = 1, uplines = [], walletAddress } = req.body || {}
+    const { userEmail, productId, qty = 1, couponCode } = req.body || {}
 
-    // 参数校验
     if (!isEmail(userEmail)) return res.status(400).json({ ok: false, error: 'userEmail 格式不正确' })
     if (!productId || typeof productId !== 'string') return res.status(400).json({ ok: false, error: 'productId 必填' })
     const q = Math.max(1, toInt(qty, 1))
@@ -80,48 +72,115 @@ router.post('/mock', async (req, res) => {
     const product = await prisma.product.findUnique({ where: { id: productId } })
     if (!product) return res.status(404).json({ ok: false, error: 'product not found' })
 
-    const unit  = toNum(product.priceFiat, undefined) ?? toNum(product.price, 199)
-    const total = unit * q
+    let coupon = null
+    if (couponCode) {
+      const now = new Date()
+      coupon = await prisma.coupon.findUnique({ where: { code: couponCode } })
+      if (!coupon || (coupon.startsAt && coupon.startsAt > now) || (coupon.endsAt && coupon.endsAt < now) || (coupon.usageLimit != null && coupon.usedCount >= coupon.usageLimit)) {
+        return res.status(400).json({ ok: false, error: 'coupon invalid' })
+      }
+    }
 
-    // 事务：订单 + 佣金
+    const unitFiat = new Prisma.Decimal(product.priceFiat)
+    const unitCrypto = new Prisma.Decimal(product.priceCrypto)
+    let finalFiat = unitFiat
+    if (coupon) {
+      const discount = new Prisma.Decimal(coupon.discountValue)
+      if (coupon.discountType === 'percentage') {
+        finalFiat = unitFiat.mul(new Prisma.Decimal('100').minus(discount)).div(100)
+      } else if (coupon.discountType === 'fixed') {
+        finalFiat = unitFiat.minus(discount)
+      }
+      if (finalFiat.lt(0)) finalFiat = new Prisma.Decimal('0')
+    }
+    const amountFiat = finalFiat.mul(q)
+    const amountCrypto = unitCrypto.mul(q)
+
     const order = await prisma.$transaction(async (tx) => {
       const o = await tx.order.create({
         data: {
           userId: buyer.id,
           productId: product.id,
           qty: q,
-          amountFiat:   new Prisma.Decimal(total.toString()),
+          amountFiat,
+          amountCrypto,
+          status: 'pending',
+          couponId: coupon?.id || null,
+        },
+        select: { id: true }
+      })
+      if (coupon) {
+        await tx.coupon.update({
+          where: { id: coupon.id },
+          data: { usedCount: { increment: 1 } }
+        })
+      }
+      return o
+    })
+
+    const payUrl = `https://pay.mock/${order.id}`
+    return res.json({ ok: true, orderId: order.id, payUrl })
+  } catch (err) {
+    console.error('[orders.create] fatal', err)
+    if (process.env.NODE_ENV !== 'production') {
+      return res.status(500).json({ ok: false, error: err?.message || 'internal_error', meta: err?.meta })
+    }
+    return res.status(500).json({ ok: false, error: 'internal_error' })
+  }
+})
+
+/* ---------- 创建订单（mock支付） ---------- */
+router.post('/mock', async (req, res) => {
+  try {
+    const { userEmail, productId, qty = 1, walletAddress } = req.body || {}
+
+    if (!isEmail(userEmail)) return res.status(400).json({ ok: false, error: 'userEmail 格式不正确' })
+    if (!productId || typeof productId !== 'string') return res.status(400).json({ ok: false, error: 'productId 必填' })
+    const q = Math.max(1, toInt(qty, 1))
+
+    const buyer = await ensureUserByEmail(userEmail)
+    const product = await prisma.product.findUnique({ where: { id: productId } })
+    if (!product) return res.status(404).json({ ok: false, error: 'product not found' })
+
+    const unit  = toNum(product.priceFiat, undefined) ?? 199
+    const total = unit * q
+    const totalDec = new Prisma.Decimal(total.toString())
+
+    const order = await prisma.$transaction(async (tx) => {
+      const o = await tx.order.create({
+        data: {
+          userId: buyer.id,
+          productId: product.id,
+          qty: q,
+          amountFiat: totalDec,
           amountCrypto: new Prisma.Decimal('0'),
-          amount:       new Prisma.Decimal(total.toString()),
           status: 'paid',
           payRef: null
         },
         select: { id: true }
       })
 
+      const referral = await tx.referral.findUnique({ where: { userId: buyer.id } })
+      const uplineIds = [referral?.l1, referral?.l2, referral?.l3].filter(Boolean)
       const rates  = [0.06, 0.03, 0.01]
-      const emails = Array.isArray(uplines) ? [...new Set(uplines.filter(Boolean))].slice(0, 3) : []
-      if (emails.length) {
-        const rows = []
-        for (let i = 0; i < emails.length; i++) {
-          if (!isEmail(emails[i])) continue
-          const up = await ensureUserByEmail(emails[i])
-          rows.push({
-            level: i + 1,
-            beneficiaryId: up.id,
-            baseAmount: new Prisma.Decimal(total.toString()),
-            rate: rates[i],
-            payoutCurrency: 'fiat',
-            status: 'pending',
-            orderId: o.id
-          })
-        }
-        if (rows.length) await tx.commission.createMany({ data: rows, skipDuplicates: true })
+
+      for (let i = 0; i < uplineIds.length && i < 3; i++) {
+        const rateDec = new Prisma.Decimal(rates[i].toString())
+        const comAmount = totalDec.mul(rateDec)
+        await tx.commission.create({
+          data: {
+            orderId: o.id,
+            affiliateId: uplineIds[i],
+            rate: rateDec,
+            amountFiat: comAmount,
+            amountCrypto: new Prisma.Decimal('0'),
+            status: 'pending'
+          }
+        })
       }
       return o
     })
 
-    // 铸造放事务外
     let mintTx = null
     try {
       if (walletAddress && isAddr(walletAddress)) {
@@ -135,7 +194,6 @@ router.post('/mock', async (req, res) => {
 
     return res.json({ ok: true, orderId: order.id, mintTx })
   } catch (err) {
-    // B：开发期详细报错，生产隐藏
     console.error('[orders.mock] fatal', err)
     if (process.env.NODE_ENV !== 'production') {
       return res.status(500).json({
@@ -148,30 +206,21 @@ router.post('/mock', async (req, res) => {
   }
 })
 
-// ---- 查询订单明细（去掉不存在字段的排序，必要时内存排序） ----
+/* ---------- 查询订单明细 ---------- */
 router.get('/:id', async (req, res) => {
   try {
     const id = req.params.id
 
     const order = await prisma.order.findUnique({
       where: { id },
-      include: { user: true, product: true } // 不指定具体字段，避免模型变更报错
+      include: { user: true, product: true, coupon: true }
     })
     if (!order) return res.status(404).json({ ok:false, error:'order not found' })
 
-    // 不使用数据库 orderBy，以免引用不存在的列
-    let commissions = await prisma.commission.findMany({
-      where: { orderId: id }
+    const commissions = await prisma.commission.findMany({
+      where: { orderId: id },
+      include: { affiliate: true }
     })
-
-    // 若存在 level 字段，则在内存里按 level 升序；否则不排序
-    if (Array.isArray(commissions) && commissions.length > 0 && 'level' in commissions[0]) {
-      commissions = commissions.sort((a, b) => {
-        const la = a.level ?? Number.POSITIVE_INFINITY
-        const lb = b.level ?? Number.POSITIVE_INFINITY
-        return la - lb
-      })
-    }
 
     return res.json(dec2str({ ok:true, order, commissions }))
   } catch (e) {
@@ -183,7 +232,6 @@ router.get('/:id', async (req, res) => {
   }
 })
 
-
 /* ---------- 订单列表（分页） ---------- */
 router.get('/', async (req, res) => {
   try {
@@ -191,7 +239,7 @@ router.get('/', async (req, res) => {
     const skip = Math.max(0, toInt(req.query.offset ?? '0', 0))
     const orders = await prisma.order.findMany({
       orderBy: { createdAt: 'desc' }, take, skip,
-      select: { id: true, status: true, qty: true, amountFiat: true, amount: true, createdAt: true }
+      select: { id: true, status: true, qty: true, amountFiat: true, amountCrypto: true, createdAt: true }
     })
     return res.json(dec2str({ ok: true, orders, nextOffset: skip + orders.length }))
   } catch (e) {
