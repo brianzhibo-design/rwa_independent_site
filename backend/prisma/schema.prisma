@@ -19,7 +19,7 @@ model User {
 
 model Product {
   id String @id @default(cuid())
-  // 你的其他产品字段...
+
 
   inventoryLots InventoryLot[]
   orders        Order[] // 反向一对多：一个产品有多个订单
@@ -33,12 +33,12 @@ model Order {
   qty          Int
   amountFiat   Decimal  @db.Decimal(18, 2)
   amountCrypto Decimal  @db.Decimal(18, 8)
-  amount       Decimal  @default(0) @db.Decimal(18, 2)
+  amount       Decimal  @db.Decimal(18, 2)
   status       String
   payRef       String?
   createdAt    DateTime @default(now())
 
-  // 关键：补上三条关系的“反向字段”
+  
   user        User         @relation(fields: [userId], references: [id])
   product     Product      @relation(fields: [productId], references: [id])
   commissions Commission[]
@@ -50,9 +50,9 @@ model Order {
 model Commission {
   id      String @id @default(cuid())
   orderId String
-  // 你的其他佣金字段...
+  
 
-  // 已有：指向 Order 的关系
+
   order Order @relation(fields: [orderId], references: [id])
 }
 
