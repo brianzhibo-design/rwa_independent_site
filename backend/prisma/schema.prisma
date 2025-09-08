@@ -1,124 +1,81 @@
-generator client {
-  provider = "prisma-client-js"
-}
-
+// prisma/schema.prisma
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id          String       @id @default(cuid())
-  email       String       @unique
-  createdAt   DateTime     @default(now())
-  wallets     Wallet[]
-  orders      Order[]
-  referral    Referral?
-  commissions Commission[]
-  redemptions Redemption[]
+generator client {
+  provider = "prisma-client-js"
 }
 
-model Wallet {
-  id      String  @id @default(cuid())
-  user    User    @relation(fields: [userId], references: [id])
-  userId  String
-  chainId Int
-  address String  @unique
-  type    String
-  kyc     String?
+model User {
+  id String @id @default(cuid())
+  // 你的其他用户字段...
+
+  wallets  Wallet[]
+  orders   Order[] // 反向一对多：一个用户有多个订单
+  referral Referral?
 }
 
 model Product {
-  id            String         @id @default(cuid())
-  title         String
-  sku           String         @unique
-  priceFiat     Decimal        @db.Decimal(14, 2)
-  priceToken    Decimal        @db.Decimal(32, 8)
-  rwaType       String
-  chainId       Int
-  contract      String
-  tokenType     String
-  redeemPolicy  Json
-  status        String
+  id String @id @default(cuid())
+  // 你的其他产品字段...
+
   inventoryLots InventoryLot[]
-  orders        Order[]
+  orders        Order[] // 反向一对多：一个产品有多个订单
   redemptions   Redemption[]
 }
 
-model InventoryLot {
-  id           String    @id @default(cuid())
-  product      Product   @relation(fields: [productId], references: [id])
-  productId    String
-  lotNo        String
-  qtyTotal     Int
-  qtyAvailable Int
-  warehouseId  String
-  custodyHash  String
-  insurer      String?
-  expiryAt     DateTime?
-}
-
 model Order {
-  id           String       @id @default(cuid())
-  user         User         @relation(fields: [userId], references: [id])
+  id           String   @id @default(cuid())
   userId       String
-  product      Product      @relation(fields: [productId], references: [id])
   productId    String
   qty          Int
-  amountFiat   Decimal      @db.Decimal(14, 2)
-  amountCrypto Decimal      @db.Decimal(32, 8)
+  amountFiat   Decimal  @db.Decimal(18, 2)
+  amountCrypto Decimal  @db.Decimal(18, 8)
+  amount       Decimal  @default(0) @db.Decimal(18, 2)
   status       String
   payRef       String?
-  createdAt    DateTime     @default(now())
-  commissions  Commission[]
-}
+  createdAt    DateTime @default(now())
 
-model Referral {
-  id     String  @id @default(cuid())
-  user   User    @relation(fields: [userId], references: [id])
-  userId String  @unique
-  l1     String?
-  l2     String?
-  l3     String?
-  active Boolean @default(true)
+  // 关键：补上三条关系的“反向字段”
+  user        User         @relation(fields: [userId], references: [id])
+  product     Product      @relation(fields: [productId], references: [id])
+  commissions Commission[]
+
+  @@index([userId])
+  @@index([productId])
 }
 
 model Commission {
-  id             String    @id @default(cuid())
-  order          Order     @relation(fields: [orderId], references: [id])
-  orderId        String
-  beneficiary    User      @relation(fields: [beneficiaryId], references: [id])
-  beneficiaryId  String
-  level          Int
-  baseAmount     Decimal   @db.Decimal(14, 2)
-  rate           Decimal   @db.Decimal(5, 4)
-  payoutCurrency String
-  vestingAt      DateTime?
-  txid           String?
-  status         String
+  id      String @id @default(cuid())
+  orderId String
+  // 你的其他佣金字段...
+
+  // 已有：指向 Order 的关系
+  order Order @relation(fields: [orderId], references: [id])
+}
+
+model Wallet {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+}
+
+model Referral {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+}
+
+model InventoryLot {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
 }
 
 model Redemption {
-  id                String   @id @default(cuid())
-  user              User     @relation(fields: [userId], references: [id])
-  userId            String
-  product           Product  @relation(fields: [productId], references: [id])
-  productId         String
-  qty               Int
-  burnTxid          String?
-  kycCheck          String?
-  shippingAddressId String?
-  shippingStatus    String?
-  createdAt         DateTime @default(now())
-}
-
-model AuditLog {
-  id         String   @id @default(cuid())
-  objectType String
-  objectId   String
-  action     String
-  actor      String?
-  before     Json?
-  after      Json?
-  createdAt  DateTime @default(now())
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
 }

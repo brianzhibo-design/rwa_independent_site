@@ -1,15 +1,14 @@
-
-const hre = require("hardhat");
+import hre from 'hardhat';
 
 async function main() {
-  const RWA1155 = await hre.ethers.getContractFactory("RWA1155");
-  const uri = "https://example.com/metadata/{id}.json"; // TODO: replace
-  const rwa = await RWA1155.deploy(uri);
-  await rwa.deployed();
-  console.log("RWA1155 deployed to:", rwa.address);
+  const [wallet] = await hre.viem.getWalletClients();
+  const publicClient = await hre.viem.getPublicClient();
+  const contract = await hre.viem.deployContract('RWA1155', ['https://example.com/metadata/{id}.json']);
+  const receipt = await publicClient.waitForTransactionReceipt({
+    hash: contract.deploymentTransaction().hash,
+  });
+  console.log('RWA1155 deployed to:', contract.address);
+  console.log('Deploy tx:', receipt.transactionHash);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+main().catch((e) => { console.error(e); process.exit(1); });
