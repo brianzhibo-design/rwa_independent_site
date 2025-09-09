@@ -186,7 +186,12 @@ router.post('/mock', async (req, res) => {
       if (walletAddress && isAddr(walletAddress)) {
         const tokenId = tokenIdFromProduct(product)
         mintTx = await mint1155(walletAddress, tokenId, q)
-        try { await prisma.order.update({ where: { id: order.id }, data: { mintHash: mintTx } }) } catch {}
+        console.log(`[Mint] success, tx=${mintTx}`)
+        const updated = await prisma.order.update({
+          where: { id: order.id },
+          data: { mintHash: mintTx }
+        })
+        console.log(`[Order Update] set mintHash=${updated.mintHash} for order ${order.id}`)
       }
     } catch (e) {
       console.warn('[Mint] failed:', e?.message || e)

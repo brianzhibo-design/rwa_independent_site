@@ -60,21 +60,23 @@ model InventoryLot {
 }
 
 model Order {
-  id            String       @id @default(cuid())
-  user          User         @relation(fields: [userId], references: [id])
-  userId        String
-  product       Product      @relation(fields: [productId], references: [id])
-  productId     String
-  qty           Int
-  amountFiat    Decimal      @db.Decimal(14, 2)
-  amountCrypto  Decimal      @db.Decimal(32, 8)
-  status        OrderStatus  @default(pending)
-  payRef        String?
-  couponId      String?
-  coupon        Coupon?      @relation(fields: [couponId], references: [id])
-  createdAt     DateTime     @default(now())
-  commissions   Commission[]
+  id           String      @id @default(cuid())
+  user         User        @relation(fields: [userId], references: [id])
+  userId       String
+  product      Product     @relation(fields: [productId], references: [id])
+  productId    String
+  qty          Int
+  amountFiat   Decimal     @db.Decimal(14, 2)
+  amountCrypto Decimal     @db.Decimal(32, 8)
+  status       OrderStatus @default(pending)
+  payRef       String?
+  couponId     String?
+  coupon       Coupon?     @relation(fields: [couponId], references: [id])
+  createdAt    DateTime    @default(now())
+  commissions  Commission[]
+  mintHash     String?     
 }
+
 
 model Referral {
   id     String  @id @default(cuid())
