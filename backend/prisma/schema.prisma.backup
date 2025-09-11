@@ -1,0 +1,187 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  createdAt    DateTime     @default(now())
+  wallets      Wallet[]
+  orders       Order[]
+  referral     Referral?
+  commissions  Commission[]
+  redemptions  Redemption[]
+  payouts      Payout[]
+}
+
+model Wallet {
+  id      String  @id @default(cuid())
+  user    User    @relation(fields: [userId], references: [id])
+  userId  String
+  chainId Int
+  address String  @unique
+  type    String
+  kyc     String?
+}
+
+model Product {
+  id             String         @id @default(cuid())
+  title          String
+  sku            String         @unique
+  priceFiat      Decimal        @db.Decimal(14, 2)
+  priceCrypto    Decimal        @db.Decimal(32, 8)
+  rwaType        String
+  chainId        Int
+  contract       String
+  tokenType      String
+  redeemPolicy   Json
+  status         String
+  inventoryLots  InventoryLot[]
+  orders         Order[]
+  redemptions    Redemption[]
+}
+
+model InventoryLot {
+  id           String    @id @default(cuid())
+  product      Product   @relation(fields: [productId], references: [id])
+  productId    String
+  lotNo        String
+  qtyTotal     Int
+  qtyAvailable Int
+  warehouseId  String
+  custodyHash  String
+  insurer      String?
+  expiryAt     DateTime?
+}
+
+model Order {
+  id           String      @id @default(cuid())
+  user         User        @relation(fields: [userId], references: [id])
+  userId       String
+  product      Product     @relation(fields: [productId], references: [id])
+  productId    String
+  qty          Int
+  amountFiat   Decimal     @db.Decimal(14, 2)
+  amountCrypto Decimal     @db.Decimal(32, 8)
+  status       OrderStatus @default(pending)
+  payRef       String?
+  couponId     String?
+  coupon       Coupon?     @relation(fields: [couponId], references: [id])
+  createdAt    DateTime    @default(now())
+  commissions  Commission[]
+  mintHash     String?     
+}
+
+
+model Referral {
+  id     String  @id @default(cuid())
+  user   User    @relation(fields: [userId], references: [id])
+  userId String  @unique
+  l1     String?
+  l2     String?
+  l3     String?
+  active Boolean @default(true)
+}
+
+model Commission {
+  id            String            @id @default(cuid())
+  order         Order             @relation(fields: [orderId], references: [id])
+  orderId       String
+  affiliate     User              @relation(fields: [affiliateId], references: [id])
+  affiliateId   String
+  rate          Decimal           @db.Decimal(5, 4)
+  amountFiat    Decimal           @db.Decimal(14, 2)
+  amountCrypto  Decimal           @db.Decimal(32, 8)
+  status        CommissionStatus  @default(pending)
+  createdAt     DateTime          @default(now())
+  paidAt        DateTime?
+}
+
+model Payout {
+  id                 String        @id @default(cuid())
+  affiliate          User          @relation(fields: [affiliateId], references: [id])
+  affiliateId        String
+  totalAmountFiat    Decimal       @db.Decimal(14, 2)
+  totalAmountCrypto  Decimal       @db.Decimal(32, 8)
+  method             PayoutMethod
+  status             PayoutStatus  @default(pending)
+  requestedAt        DateTime      @default(now())
+  processedAt        DateTime?
+}
+
+model Coupon {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  discountType  String
+  discountValue Decimal  @db.Decimal(14, 2)
+  startsAt      DateTime?
+  endsAt        DateTime?
+  usageLimit    Int?
+  usedCount     Int      @default(0)
+  orders        Order[]
+}
+
+enum CommissionStatus {
+  pending
+  approved
+  paid
+}
+
+enum PayoutMethod {
+  bank
+  usdt
+  other
+}
+
+enum PayoutStatus {
+  pending
+  processing
+  paid
+  failed
+}
+
+enum OrderStatus {
+  pending
+  paid
+  failed
+  refunded
+  fulfilled
+}
+
+model Redemption {
+  id                String   @id @default(cuid())
+  user              User     @relation(fields: [userId], references: [id])
+  userId            String
+  product           Product  @relation(fields: [productId], references: [id])
+  productId         String
+  qty               Int
+  burnTxid          String?
+  kycCheck          String?
+  shippingAddressId String?
+  shippingStatus    String?
+  createdAt         DateTime @default(now())
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  objectType String
+  objectId   String
+  action     String
+  actor      String?
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+}
+
+model WebhookEvent {
+  id        String   @id
+  provider  String   @default("stripe")
+  type      String
+  payload   Json?
+  createdAt DateTime @default(now())
+}

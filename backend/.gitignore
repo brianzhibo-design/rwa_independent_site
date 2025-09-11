@@ -1,3 +1,50 @@
-node_modules
-*.log
+# Dependencies
+node_modules/
+.pnpm-lock.yaml
+package-lock.json
+
+# Environment variables
 .env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Dependency directories
+node_modules/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env
+
+# Prisma
+.env
+prisma/.env
+
+# IDE
+.vscode/
+.idea/
+
+# macOS
+.DS_Store
+
+# Test files
+test_*.js

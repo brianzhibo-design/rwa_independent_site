@@ -1,0 +1,201 @@
+import { Router } from 'express'
+import Stripe from 'stripe'
+import { PrismaClient, Prisma } from '@prisma/client'
+import { 
+  validateOrderExists, 
+  processCommissionDistribution, 
+  handleWebhookError,
+  validateAmount 
+} from '../services/webhookProcessor.js'
+
+const prisma = new PrismaClient()
+const router = Router()
+
+// Initialize Stripe
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: '2023-10-16'
+})
+
+/**
+ * 验证 Stripe webhook 签名
+ */
+function verifyStripeSignature(rawBody, signature) {
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
+  
+  if (!webhookSecret) {
+    throw new Error('STRIPE_WEBHOOK_SECRET not configured')
+  }
+
+  try {
+    const event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret)
+    return event
+  } catch (error) {
+    console.error('[Webhook] Signature verification failed:', error.message)
+    throw new Error(`Webhook signature verification failed: ${error.message}`)
+  }
+}
+
+/**
+ * 确保事件幂等性
+ */
+async function ensureEventIdempotency(eventId) {
+  try {
+    await prisma.webhookEvent.create({
+      data: {
+        id: eventId,
+        provider: 'stripe',
+        type: 'unknown',
+        payload: {}
+      }
+    })
+    return false // 第一次处理
+  } catch (error) {
+    if (error.code === 'P2002') { // Unique constraint violation
+      console.log(`[Webhook] Event ${eventId} already processed (idempotent)`)
+      return true // 已处理过
+    }
+    throw error
+  }
+}
+
+/**
+ * 处理支付成功事件
+ */
+async function processPaymentSuccess(event) {
+  const session = event.data.object
+  const { orderId, userEmail } = session.metadata || {}
+
+  if (!orderId) {
+    console.warn(`[Webhook] No orderId in metadata for session ${session.id}`)
+    return { success: false, reason: 'missing_order_id' }
+  }
+
+  console.log(`[Webhook] Processing payment for order ${orderId}`)
+
+  try {
+    // 验证订单存在
+    const order = await validateOrderExists(orderId)
+    
+    // 验证用户邮箱匹配
+    if (userEmail && order.user.email !== userEmail) {
+      console.warn(`[Webhook] Email mismatch: order=${order.user.email}, session=${userEmail}`)
+    }
+
+    // 验证金额匹配
+    const isAmountValid = validateAmount(
+      order.amountFiat, 
+      session.amount_total, 
+      session.currency
+    )
+    
+    if (!isAmountValid) {
+      console.error(`[Webhook] Amount validation failed for order ${orderId}`)
+      return { success: false, reason: 'amount_mismatch' }
+    }
+
+    const payRef = session.payment_intent || session.id
+
+    // 使用事务处理订单更新和佣金创建
+    const result = await prisma.$transaction(async (tx) => {
+      // 检查订单是否已经支付且 payRef 相同（幂等性）
+      if (order.status === 'paid' && order.payRef === payRef) {
+        console.log(`[Webhook] Order ${orderId} already paid with same payRef (idempotent)`)
+        return { updated: false, commissions: [] }
+      }
+
+      // 更新订单状态
+      const updatedOrder = await tx.order.update({
+        where: { id: orderId },
+        data: { 
+          status: 'paid', 
+          payRef: payRef 
+        }
+      })
+
+      // 处理佣金分发
+      const commissions = await processCommissionDistribution(updatedOrder, tx)
+
+      return { updated: true, commissions }
+    })
+
+    console.log(`[Webhook] Successfully processed payment for order ${orderId}`)
+    return { success: true, ...result }
+
+  } catch (error) {
+    handleWebhookError(error, event.id)
+    throw error
+  }
+}
+
+/**
+ * Stripe webhook 主处理器
+ */
+router.post('/stripe', async (req, res) => {
+  const signature = req.headers['stripe-signature']
+  
+  if (!signature) {
+    console.warn('[Webhook] Missing Stripe signature')
+    return res.status(400).json({ error: 'Missing signature' })
+  }
+
+  try {
+    // 验证签名
+    const event = verifyStripeSignature(req.body, signature)
+    
+    // 检查事件幂等性
+    const alreadyProcessed = await ensureEventIdempotency(event.id)
+    if (alreadyProcessed) {
+      return res.json({ received: true, processed: 'idempotent' })
+    }
+
+    // 更新 webhook 事件记录
+    await prisma.webhookEvent.update({
+      where: { id: event.id },
+      data: { 
+        type: event.type,
+        payload: event
+      }
+    })
+
+    console.log(`[Webhook] Processing ${event.type} event: ${event.id}`)
+
+    // 处理支持的事件类型
+    switch (event.type) {
+      case 'checkout.session.completed':
+        await processPaymentSuccess(event)
+        break
+        
+      case 'payment_intent.succeeded':
+        console.log(`[Webhook] Payment intent succeeded: ${event.data.object.id}`)
+        break
+        
+      default:
+        console.log(`[Webhook] Unhandled event type: ${event.type}`)
+    }
+
+    res.json({ received: true, processed: true })
+
+  } catch (error) {
+    console.error('[Webhook] Processing failed:', error.message)
+    
+    // 对于签名验证失败，返回 400
+    if (error.message.includes('signature verification')) {
+      return res.status(400).json({ error: 'Invalid signature' })
+    }
+
+    // 对于其他错误，返回 200 避免 Stripe 重试风暴
+    res.status(200).json({ 
+      received: true, 
+      processed: false,
+      error: process.env.NODE_ENV === 'production' ? 'Internal error' : error.message
+    })
+  }
+})
+
+// 保留其他 webhook 端点
+router.post('/coinbase', async (req, res) => {
+  console.log('[Coinbase] Webhook received:', req.body?.type)
+  res.json({ received: true })
+})
+
+export default router
