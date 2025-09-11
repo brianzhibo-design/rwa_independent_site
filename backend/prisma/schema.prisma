@@ -74,7 +74,10 @@ model Order {
   coupon       Coupon?     @relation(fields: [couponId], references: [id])
   createdAt    DateTime    @default(now())
   commissions  Commission[]
-  mintHash     String?     
+  mintHash     String?   
+  walletAddress String?  
+
+  @@unique([payRef])
 }
 
 
@@ -176,4 +179,28 @@ model AuditLog {
   before     Json?
   after      Json?
   createdAt  DateTime @default(now())
+}
+
+model WebhookEvent {
+  id        String   @id
+  provider  String   @default("stripe")
+  type      String
+  payload   Json?
+  createdAt DateTime @default(now())
+}
+
+model MintJob {
+  id            String   @id @default(cuid())
+  orderId       String   @unique
+  walletAddress String
+  tokenId       Int
+  amount        Int
+  status        String   @default("queued") // queued, processing, succeeded, failed
+  attempts      Int      @default(0)
+  lastError     String?
+  txHash        String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([status, createdAt])
 }

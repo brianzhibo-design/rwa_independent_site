@@ -62,7 +62,7 @@ function tokenIdFromProduct(p) {
 /* ---------- 创建订单（pending，返回支付链接，可选优惠券） ---------- */
 router.post('/', async (req, res) => {
   try {
-    const { userEmail, productId, qty = 1, couponCode } = req.body || {}
+    const { userEmail, productId, qty = 1, couponCode, walletAddress } = req.body || {}
 
     if (!isEmail(userEmail)) return res.status(400).json({ ok: false, error: 'userEmail 格式不正确' })
     if (!productId || typeof productId !== 'string') return res.status(400).json({ ok: false, error: 'productId 必填' })
@@ -106,6 +106,7 @@ router.post('/', async (req, res) => {
           amountCrypto,
           status: 'pending',
           couponId: coupon?.id || null,
+          walletAddress: walletAddress || null,
         },
         select: { id: true }
       })

@@ -6,16 +6,19 @@
   "scripts": {
     "dev": "node --watch ./src/server.js",
     "start": "node ./src/server.js",
+    "worker": "node ./src/workers/mintWorker.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev --name init",
-    "test": "node --test"
+    "test": "node --test",
+    "test:payments": "node --test src/tests/payments.test.js"
   },
   "dependencies": {
     "express": "^4.19.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "@prisma/client": "^5.18.0",
-    "viem": "^2.9.28"
+    "viem": "^2.9.28",
+    "stripe": "^14.21.0"
   },
   "devDependencies": {
     "prisma": "^5.18.0"
